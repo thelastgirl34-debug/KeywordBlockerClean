@@ -25,12 +25,18 @@ class BlockerService : AccessibilityService() {
         } catch (e: Throwable) {}
     }
 
-    // AI Studio ve Google AI adreslerini tam kapsayacak şekilde genişlettik
-    private val whitelistedDomains = listOf(
+    // AI Studio'yu hem URL'den hem de sayfa içi buton/yazılardan tanıyan liste
+    private val whitelistedTerms = listOf(
         "aistudio.google.com",
         "ai.google.dev",
         "aistudio",
-        "google ai studio"
+        "ai studio",
+        "google ai studio",
+        "Playground",
+        "system instructions",
+        "get api key",
+        "safety settings",
+        "user prompt"
     )
 
     private val blockedWords = listOf(
@@ -58,18 +64,16 @@ class BlockerService : AccessibilityService() {
         try {
             if (event == null) return
 
-            // 1. İLK VE EN ÖNEMLİ ADIM: AI Studio'da mıyız kontrol et!
-            val rootNode = rootInActiveWindow
-            if (rootNode != null && isWhitelisted(rootNode)) {
-                return // AI Studio'daysak KESİNLİKLE HİÇBİR ŞEY YAPMA, serbest bırak!
+            // 1. ADIM: TÜM AÇIK PENCERELERDE AI STUDIO KONTROLÜ YAP
+            if (isAIStudioActive()) {
+                return // AI Studio açıksa hiçbir işlem yapma, serbest bırak!
             }
 
-            // 2. Eğer AI Studio'da DEĞİLSEK klavyeyi kontrol et
+            // 2. ADIM: AI Studio'da değilsek klavye ve ekrandaki kelimeleri avla
             for (text in event.text) {
                 if (checkText(text?.toString())) return
             }
 
-            // 3. Olay kaynağını kontrol et
             val source = event.source
             if (source != null) {
                 if (checkText(source.text?.toString()) || checkText(source.contentDescription?.toString())) {
@@ -77,11 +81,49 @@ class BlockerService : AccessibilityService() {
                 }
             }
 
-            // 4. Ekrandaki yazıları kontrol et
+            val rootNode = rootInActiveWindow
             if (rootNode != null) {
                 scanNodeShallow(rootNode, 0)
             }
         } catch (e: Throwable) {}
+    }
+
+    // Telefonun açık olan tüm katmanlarını (gizli adres çubuğu dahil) tarar
+    private fun isAIStudioActive(): Boolean {
+        try {
+            val allWindows = windows
+            if (allWindows != null && allWindows.isNotEmpty()) {
+                for (window in allWindows) {
+                    val root = window.root ?: continue
+                    if (scanForWhitelist(root, 0)) return true
+                }
+            }
+
+            val activeRoot = rootInActiveWindow
+            if (activeRoot != null && scanForWhitelist(activeRoot, 0)) {
+                return true
+            }
+        } catch (e: Throwable) {}
+        return false
+    }
+
+    private fun scanForWhitelist(node: AccessibilityNodeInfo?, depth: Int): Boolean {
+        if (node == null || depth > 7) return false
+        try {
+            val text = node.text?.toString()?.lowercase() ?: ""
+            val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+
+            if (whitelistedTerms.any { text.contains(it) || desc.contains(it) }) {
+                return true
+            }
+
+            for (i in 0 until node.childCount) {
+                if (scanForWhitelist(node.getChild(i), depth + 1)) {
+                    return true
+                }
+            }
+        } catch (e: Throwable) {}
+        return false
     }
 
     private fun scanNodeShallow(node: AccessibilityNodeInfo?, depth: Int) {
@@ -110,30 +152,6 @@ class BlockerService : AccessibilityService() {
                 return true
             }
         }
-        return false
-    }
-
-    // Adres çubuğu veya sayfa başlığında AI Studio geçiyor mu derinlemesine arar
-    private fun isWhitelisted(node: AccessibilityNodeInfo?): Boolean {
-        return checkWhitelistRecursive(node, 0)
-    }
-
-    private fun checkWhitelistRecursive(node: AccessibilityNodeInfo?, depth: Int): Boolean {
-        if (node == null || depth > 6) return false
-        try {
-            val text = node.text?.toString()?.lowercase() ?: ""
-            val desc = node.contentDescription?.toString()?.lowercase() ?: ""
-
-            if (whitelistedDomains.any { text.contains(it) || desc.contains(it) }) {
-                return true
-            }
-
-            for (i in 0 until node.childCount) {
-                if (checkWhitelistRecursive(node.getChild(i), depth + 1)) {
-                    return true
-                }
-            }
-        } catch (e: Throwable) {}
         return false
     }
 
